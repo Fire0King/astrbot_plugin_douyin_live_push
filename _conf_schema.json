@@ -1,0 +1,21 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "check_interval": {
+            "type": "integer",
+            "default": 60,
+            "description": "直播状态检测间隔（秒）"
+        },
+        "default_at_all": {
+            "type": "boolean",
+            "default": false,
+            "description": "新订阅时是否默认开启@全体成员"
+        },
+        "douyin_cookie": {
+            "type": "string",
+            "default": "",
+            "description": "抖音网页版登录后的Cookie（必填）"
+        }
+    }
+}

@@ -1,6 +1,8 @@
-name: helloworld # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
-display_name: helloworld # 用于展示的名字，可以是方便人类阅读的名字（需要版本 >= v4.5.0，低版本不会报错，请放心填写）
-desc: AstrBot 插件示例。 # 插件简短描述
-version: v1.3.0 # 插件版本号。格式：v1.1.1 或者 v1.1
-author: Soulter # 作者
-repo: https://github.com/Soulter/helloworld # 插件的仓库地址
+name: astrbot_plugin_douyin_live_push # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
+display_name: douyin_live_push # 用于展示的名字，可以是方便人类阅读的名字（需要版本 >= v4.5.0，低版本不会报错，请放心填写）
+desc: 抖音直播推送。 # 插件简短描述
+short_desc: 抖音直播开播提醒与状态监控
+version: v1.1.1 # 插件版本号。格式：v1.1.1 或者 v1.1
+author: Fire_King # 作者
+repo: https://github.com/Fire0King/astrbot_plugin_douyin_live_push # 插件的仓库地址
+astrbot_version: ">=4.16,<5"

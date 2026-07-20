@@ -11,6 +11,7 @@ import os
 import tempfile
 import uuid
 from pathlib import Path
+from string import Template
 from typing import Optional, Tuple
 
 from astrbot.api import logger
@@ -104,7 +105,7 @@ class Renderer:
                 viewport={"width": 460, "height": 10},
                 device_scale_factor=2
             )
-            await page.set_content(html, wait_until="networkidle")
+            await page.set_content(html, wait_until="load")
             # 等待图片加载（最多 5 秒）
             try:
                 await page.wait_for_load_state("networkidle", timeout=5000)
@@ -164,9 +165,10 @@ class Renderer:
         # 图文模式：尝试渲染 HTML 卡片
         img_path = None
         if self.rai:
-            tmpl = self._load_template("video_card.html")
-            if tmpl:
-                html = tmpl.format(
+            tmpl_str = self._load_template("video_card.html")
+            if tmpl_str:
+                tmpl = Template(tmpl_str)
+                html = tmpl.safe_substitute(
                     nickname=nickname, avatar=avatar, cover=cover,
                     title=desc[:100], digg_count=digg,
                     comment_count=comment, collect_count=collect,
@@ -193,12 +195,13 @@ class Renderer:
 
         img_path = None
         if self.rai:
-            tmpl = self._load_template("live_card.html")
-            if tmpl:
+            tmpl_str = self._load_template("live_card.html")
+            if tmpl_str:
+                tmpl = Template(tmpl_str)
                 avatar = ""
                 if work:
                     avatar = work.get('author', {}).get('avatar_thumb', {}).get('url_list', [None])[0] or ""
-                html = tmpl.format(
+                html = tmpl.safe_substitute(
                     badge_class="live-badge" if is_live else "offline-badge",
                     badge_text="🔴 直播中" if is_live else "⭕ 已下播",
                     nickname=nickname, avatar=avatar, title=title, url=url,

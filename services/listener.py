@@ -112,7 +112,7 @@ class DouyinListener:
                 await asyncio.sleep(10)
 
     async def _check_user_videos(self, sub_user: str, record: SubscriptionRecord):
-        """检查单个用户的视频更新"""
+        """检查单个用户的视频更新（按创建时间排序，跳过置顶视频）"""
         auth = self.dy_auth.auth
         if not auth:
             logger.warning("抖音认证未配置，跳过视频检查")
@@ -134,8 +134,16 @@ class DouyinListener:
             if not works or len(works) == 0:
                 return
 
-            # 获取最新的作品
-            latest = works[0]
+            # 按 create_time 降序排列，取最新作品（排除置顶干扰）
+            works_sorted = sorted(
+                [w for w in works if w.get('aweme_id')],
+                key=lambda w: w.get('create_time', 0), reverse=True
+            )
+
+            if not works_sorted:
+                return
+
+            latest = works_sorted[0]
             latest_id = str(latest.get('aweme_id', ''))
 
             if not latest_id:
@@ -156,15 +164,16 @@ class DouyinListener:
             if latest_id == record.last_video_id:
                 return
 
-            # 收集新视频（从 old 往后到 new）
+            # 收集新视频（从旧到新，按时间升序）
             new_videos = []
-            for work in works:
+            for work in works_sorted:
                 wid = str(work.get('aweme_id', ''))
                 if not wid:
                     continue
                 if wid == record.last_video_id:
                     break
                 new_videos.append(work)
+            new_videos.reverse()  # 从旧到新
 
             if new_videos:
                 # 更新最后视频ID和昵称
@@ -175,7 +184,7 @@ class DouyinListener:
                     nickname=nickname
                 )
                 # 从旧到新推送
-                for work in reversed(new_videos):
+                for work in new_videos:
                     await self._push_video_message(sub_user, record, work)
 
         except Exception as e:

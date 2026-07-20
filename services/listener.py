@@ -189,13 +189,19 @@ class DouyinListener:
             # 使用渲染器生成消息（返回文本 + 可选图片）
             text, img_path = await self.renderer.render_video(work, nickname)
 
-            # 构建消息链，支持 @全体成员
+            # 构建消息链
             chain = []
             if record.at_all:
                 chain.extend([AtAll(), Plain(" ")])
+
             if img_path:
+                # 有图片时：只附带纯链接（像 B站 插件一样）
                 chain.append(Image.fromFileSystem(img_path))
-            chain.append(Plain(text))
+                url = build_video_url(aweme_id)
+                chain.append(Plain(f"\n{url}"))
+            else:
+                # 无图片时：发送完整文本
+                chain.append(Plain(text))
 
             await self.context.send_message(sub_user, chain)
             logger.info(f"已向 {sub_user} 推送视频: {aweme_id}")
@@ -274,13 +280,19 @@ class DouyinListener:
         text, img_path = await self.renderer.render_live(record, is_live, title)
 
         try:
-            # 构建消息链，支持 @全体成员
+            # 构建消息链
             chain = []
             if is_live and (record.live_atall or record.at_all):
                 chain.extend([AtAll(), Plain(" ")])
+
             if img_path:
+                # 有图片时：只附带链接
                 chain.append(Image.fromFileSystem(img_path))
-            chain.append(Plain(text))
+                url = build_live_url(live_id)
+                chain.append(Plain(f"\n{url}"))
+            else:
+                # 无图片时：发送完整文本
+                chain.append(Plain(text))
 
             await self.context.send_message(sub_user, chain)
             logger.info(f"已向 {sub_user} 推送直播状态: {'开播' if is_live else '下播'}")

@@ -132,20 +132,21 @@ class DouyinListener:
             )
 
             works = resp.get("aweme_list", []) if isinstance(resp, dict) else []
-
             if not works:
                 return
 
-            # 按 (create_time, aweme_id) 稳定排序，取最新的
-            works.sort(key=lambda w: (w.get('create_time', 0), w.get('aweme_id', '')), reverse=True)
+            # 按 create_time 降序（新→旧），create_time 相同则按 aweme_id 降序
+            works.sort(key=lambda w: (w.get('create_time', 0), str(w.get('aweme_id', ''))), reverse=True)
+
+            # 收集所有 aweme_id
+            all_ids = {str(w.get('aweme_id', '')) for w in works if w.get('aweme_id')}
+            if not all_ids:
+                return
 
             latest = works[0]
             latest_id = str(latest.get('aweme_id', ''))
 
-            if not latest_id:
-                return
-
-            # 如果没有记录过的 ID，只记录不推送（首次订阅）
+            # 首次订阅：只记录，不推送
             if not record.last_video_id:
                 record.last_video_id = latest_id
                 self.data_manager.update_subscription(
@@ -156,30 +157,42 @@ class DouyinListener:
                 logger.info(f"首次记录用户 {sec_uid} 的最新视频: {latest_id}")
                 return
 
-            # 如果最新视频 ID 相同，无新视频
-            if latest_id == record.last_video_id:
-                return
+            # 检查 last_video_id 是否还在返回列表中
+            if record.last_video_id in all_ids:
+                # 在列表中 → 无新视频（last_video_id 已经是已知的最新视频之一）
+                # 但如果有比它更新的（排序在它前面的），说明有新视频
+                new_videos = []
+                found_old = False
+                for w in works:
+                    wid = str(w.get('aweme_id', ''))
+                    if wid == record.last_video_id:
+                        found_old = True
+                        break
+                    new_videos.append(w)
 
-            # 从 API 返回的 works 中（已按时间降序），收集比 last_video_id 新的
-            new_videos = []
-            for work in works:
-                wid = str(work.get('aweme_id', ''))
-                if not wid:
-                    continue
-                if wid == record.last_video_id:
-                    break
-                new_videos.append(work)
-            new_videos.reverse()  # 从旧到新推送
+                if not found_old or not new_videos:
+                    return  # 无新视频
 
-            if new_videos:
+                # 有新视频，更新 last_video_id 并推送
                 nickname = latest.get('author', {}).get('nickname', record.nickname)
                 self.data_manager.update_subscription(
                     sub_user, record.uid, 'video',
                     last_video_id=latest_id,
                     nickname=nickname
                 )
+                new_videos.reverse()  # 从旧到新推送
                 for work in new_videos:
                     await self._push_video_message(sub_user, record, work)
+            else:
+                # last_video_id 不在返回列表中（首次／很久没看）
+                # 更新为最新的，不推送（避免重复推送大量旧视频）
+                record.last_video_id = latest_id
+                self.data_manager.update_subscription(
+                    sub_user, record.uid, 'video',
+                    last_video_id=latest_id,
+                    nickname=latest.get('author', {}).get('nickname', record.nickname)
+                )
+                logger.info(f"更新 last_video_id 为最新: {latest_id}")
 
         except Exception as e:
             logger.error(f"检查用户 {sec_uid} 视频失败: {e}")

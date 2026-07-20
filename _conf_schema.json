@@ -21,5 +21,10 @@
         "description": "是否启用直播间上下播监控",
         "type": "bool",
         "default": true
+    },
+    "rai": {
+        "description": "是否启用图片渲染模式（需要 AstrBot HTML 渲染支持）",
+        "type": "bool",
+        "default": false
     }
 }

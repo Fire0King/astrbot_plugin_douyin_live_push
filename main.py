@@ -19,6 +19,7 @@ from .core.utils import (
     format_number,
 )
 from .services.listener import DouyinAuthWrapper, DouyinListener
+from .services.renderer import Renderer
 from .services.subscription_service import SubscriptionService
 
 # 插件根目录
@@ -118,15 +119,20 @@ class Main(Star):
         self.live_auth = DouyinAuthWrapper()
         self._init_auth()
 
-        # 3. 初始化订阅服务
+        # 3. 初始化渲染器
+        self.rai = self.cfg.get("rai", False)
+        self.renderer = Renderer(rai=self.rai)
+
+        # 4. 初始化订阅服务
         self.subscription_service = SubscriptionService(self.data_manager)
 
-        # 4. 初始化监听服务
+        # 5. 初始化监听服务
         self.listener = DouyinListener(
             context=self.context,
             data_manager=self.data_manager,
             dy_auth=self.dy_auth,
             live_auth=self.live_auth,
+            renderer=self.renderer,
             cfg=self.cfg
         )
 

@@ -8,6 +8,7 @@ from astrbot.core.star import Context
 from ..core.data_manager import DataManager
 from ..core.models import SubscriptionRecord
 from ..core.utils import build_user_url, build_video_url, build_live_url
+from .renderer import Renderer
 
 
 class DouyinAuthWrapper:
@@ -45,12 +46,14 @@ class DouyinListener:
             data_manager: DataManager,
             dy_auth: DouyinAuthWrapper,
             live_auth: Optional[DouyinAuthWrapper],
+            renderer: Renderer,
             cfg: dict
     ):
         self.context = context
         self.data_manager = data_manager
         self.dy_auth = dy_auth
         self.live_auth = live_auth or dy_auth
+        self.renderer = renderer
         self.cfg = cfg
 
         self.interval_secs = max(10, int(cfg.get("poll_interval", 60)))
@@ -183,24 +186,15 @@ class DouyinListener:
             author = work.get('author', {})
             nickname = author.get('nickname', record.nickname or record.uid)
             aweme_id = str(work.get('aweme_id', ''))
-            desc = work.get('desc', '无标题')
-            statistics = work.get('statistics', {})
-            digg_count = statistics.get('digg_count', 0)
-            share_url = build_video_url(aweme_id)
 
-            msg = (
-                f"📹 新视频发布\n"
-                f"👤 {nickname}\n"
-                f"📝 {desc[:100]}\n"
-                f"❤️ {digg_count} 赞\n"
-                f"🔗 {share_url}"
-            )
+            # 使用渲染器生成消息
+            content = self.renderer.render_video(work, nickname)
 
             # 构建消息链，支持 @全体成员
             chain = []
             if record.at_all:
                 chain.extend([AtAll(), Plain(" ")])
-            chain.append(Plain(msg))
+            chain.append(Plain(content))
 
             await self.context.send_message(sub_user, chain)
             logger.info(f"已向 {sub_user} 推送视频: {aweme_id}")
@@ -274,28 +268,16 @@ class DouyinListener:
     async def _push_live_message(self, sub_user: str, record: SubscriptionRecord, is_live: bool, title: str = ""):
         """推送直播消息"""
         live_id = record.room_id or record.uid
-        live_url = build_live_url(live_id)
-        nickname = record.nickname or live_id
 
-        if is_live:
-            msg = (
-                f"🔴 {nickname} 开播啦！\n"
-                f"📺 {title[:100]}\n"
-                f"🔗 {live_url}"
-            )
-        else:
-            msg = (
-                f"⚫ {nickname} 已下播\n"
-                f"📺 本次直播: {title[:100] if title else '无标题'}"
-            )
+        # 使用渲染器生成消息
+        content = self.renderer.render_live(record, is_live, title)
 
         try:
             # 构建消息链，支持 @全体成员
-            # 开播时根据 live_atall / at_all 决定，下播时永不 @全体
             chain = []
             if is_live and (record.live_atall or record.at_all):
                 chain.extend([AtAll(), Plain(" ")])
-            chain.append(Plain(msg))
+            chain.append(Plain(content))
 
             await self.context.send_message(sub_user, chain)
             logger.info(f"已向 {sub_user} 推送直播状态: {'开播' if is_live else '下播'}")

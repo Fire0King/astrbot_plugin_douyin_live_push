@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    padding: 20px;
+}
+.card {
+    background: rgba(255,255,255,0.95);
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 420px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    position: relative;
+    overflow: hidden;
+}
+.live-badge {
+    display: inline-block;
+    background: #fe2c55;
+    color: #fff;
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+.offline-badge {
+    display: inline-block;
+    background: #666;
+    color: #fff;
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-weight: 600;
+    margin-bottom: 12px;
+}
+.header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #eee;
+}
+.avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid #fe2c55;
+}
+.header-info { flex: 1; }
+.nickname {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1a1a2e;
+}
+.live-title {
+    font-size: 15px;
+    color: #333;
+    line-height: 1.5;
+    margin-bottom: 12px;
+}
+.url {
+    font-size: 12px;
+    color: #999;
+    word-break: break-all;
+}
+</style>
+</head>
+<body>
+<div class="card">
+    <div class="{badge_class}">{badge_text}</div>
+    <div class="header">
+        <img class="avatar" src="{avatar}" alt="avatar" onerror="this.style.display='none'">
+        <div class="header-info">
+            <div class="nickname">{nickname}</div>
+            <div class="tag" style="font-size:12px;color:#999;">抖音直播</div>
+        </div>
+    </div>
+    <div class="live-title">{title}</div>
+    <div class="url">{url}</div>
+</div>
+</body>
+</html>

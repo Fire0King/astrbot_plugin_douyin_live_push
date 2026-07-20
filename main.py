@@ -71,7 +71,20 @@ async def _try_update_spider(spider_path: Path):
 spider_path = plugin_dir / "DouYin_Spider"
 _spider_auto_cloned = False
 
-if not spider_path.exists():
+# 检查 DouYin_Spider 是否有效（目录不存在 / 为空 / 不是 git 仓库）
+_git_dir = spider_path / ".git"
+_spider_needs_clone = not spider_path.exists()
+if spider_path.exists() and not _git_dir.exists():
+    # 目录存在但不是 git 仓库 → 可能是空目录或损坏，删除重建
+    import shutil
+    try:
+        shutil.rmtree(str(spider_path))
+        logger.info("已删除无效的 DouYin_Spider 目录")
+    except Exception:
+        pass
+    _spider_needs_clone = True
+
+if _spider_needs_clone:
     logger.info(f"未检测到 DouYin_Spider，正在自动克隆...")
     try:
         subprocess.run(

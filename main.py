@@ -432,14 +432,17 @@ class Main(Star):
 
                 yield event.plain_result(f"⏳ 正在查询用户 {sec_uid} 最新视频...")
                 user_url = build_user_url(sec_uid)
-                works = await asyncio.to_thread(
-                    DouyinAPI.get_user_all_work_info, auth, user_url
+                resp = await asyncio.to_thread(
+                    DouyinAPI.get_user_work_info, auth, user_url, "0"
                 )
+                works = resp.get("aweme_list", []) if isinstance(resp, dict) else []
 
                 if not works:
                     yield event.plain_result("❌ 未获取到视频数据，请检查 Cookie 或 sec_uid 是否正确")
                     return
 
+                # 按时间排序取最新
+                works.sort(key=lambda w: (w.get('create_time', 0), w.get('aweme_id', '')), reverse=True)
                 latest = works[0]
                 nickname = latest.get('author', {}).get('nickname', sec_uid)
 

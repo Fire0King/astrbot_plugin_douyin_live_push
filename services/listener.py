@@ -125,25 +125,21 @@ class DouyinListener:
         user_url = build_user_url(sec_uid)
 
         try:
-            # 在线程中运行同步 API 调用
+            # 在线程中运行同步 API 调用（只取第一页，最近的作品）
             from dy_apis.douyin_api import DouyinAPI
-            works = await asyncio.to_thread(
-                DouyinAPI.get_user_all_work_info, auth, user_url
+            resp = await asyncio.to_thread(
+                DouyinAPI.get_user_work_info, auth, user_url, "0"
             )
 
-            if not works or len(works) == 0:
+            works = resp.get("aweme_list", []) if isinstance(resp, dict) else []
+
+            if not works:
                 return
 
-            # 按 create_time 降序排列，取最新作品（排除置顶干扰）
-            works_sorted = sorted(
-                [w for w in works if w.get('aweme_id')],
-                key=lambda w: w.get('create_time', 0), reverse=True
-            )
+            # 按 (create_time, aweme_id) 稳定排序，取最新的
+            works.sort(key=lambda w: (w.get('create_time', 0), w.get('aweme_id', '')), reverse=True)
 
-            if not works_sorted:
-                return
-
-            latest = works_sorted[0]
+            latest = works[0]
             latest_id = str(latest.get('aweme_id', ''))
 
             if not latest_id:
@@ -164,26 +160,24 @@ class DouyinListener:
             if latest_id == record.last_video_id:
                 return
 
-            # 收集新视频（从旧到新，按时间升序）
+            # 从 API 返回的 works 中（已按时间降序），收集比 last_video_id 新的
             new_videos = []
-            for work in works_sorted:
+            for work in works:
                 wid = str(work.get('aweme_id', ''))
                 if not wid:
                     continue
                 if wid == record.last_video_id:
                     break
                 new_videos.append(work)
-            new_videos.reverse()  # 从旧到新
+            new_videos.reverse()  # 从旧到新推送
 
             if new_videos:
-                # 更新最后视频ID和昵称
                 nickname = latest.get('author', {}).get('nickname', record.nickname)
                 self.data_manager.update_subscription(
                     sub_user, record.uid, 'video',
                     last_video_id=latest_id,
                     nickname=nickname
                 )
-                # 从旧到新推送
                 for work in new_videos:
                     await self._push_video_message(sub_user, record, work)
 

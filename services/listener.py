@@ -154,7 +154,6 @@ class DouyinListener:
             # 首次订阅 / 没有已知 ID
             if not record.last_video_id:
                 if new_videos:
-                    # 取最新的（API 第一个）作为 last
                     latest = new_videos[0]
                     latest_id = str(latest.get('aweme_id', ''))
                     record.last_video_id = latest_id
@@ -165,6 +164,18 @@ class DouyinListener:
                         nickname=latest.get('author', {}).get('nickname', record.nickname)
                     )
                     logger.info(f"首次记录用户 {sec_uid} 的最新视频: {latest_id}")
+                return
+
+            # 旧数据迁移：有 last_video_id 但 recent_ids 为空（升级前的老数据）
+            # → 不推送，只缓存当前最新一批 ID，下次开始正常检测
+            if record.last_video_id and not record.recent_ids:
+                all_ids = [str(w.get('aweme_id', '')) for w in works if w.get('aweme_id')]
+                cache_ids = all_ids[:5]
+                self.data_manager.update_subscription(
+                    sub_user, record.uid, 'video',
+                    recent_ids=cache_ids,
+                )
+                logger.info(f"旧数据迁移：已缓存 {len(cache_ids)} 个视频ID")
                 return
 
             # 有已知 ID，但没有新视频

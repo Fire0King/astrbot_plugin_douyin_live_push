@@ -343,7 +343,7 @@ class Main(Star):
             else:
                 yield event.plain_result(f"⚠️ 未找到 {uid} 的订阅")
 
-    @command("dy_list")
+    @command("dy_sub_list", alias={"订阅列表", "dy_list"})
     async def dy_list(self, event: AstrMessageEvent):
         """列出当前会话的所有订阅"""
         sub_user = event.unified_msg_origin

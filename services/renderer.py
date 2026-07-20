@@ -1,20 +1,17 @@
 """
-消息渲染器 —— 支持 Playwright 图文渲染和纯文本两种模式。
+消息渲染器 —— 支持图文渲染和纯文本两种模式。
 
 图文模式（rai=true）：
-  使用 HTML 模板 + Playwright 生成卡片图片，自动附带封面图。
+  使用 HTML 模板 + AstrBot 内置 html_render 生成卡片图片。
 纯文本模式（rai=false）：
   直接返回格式化的纯文本消息。
 """
 
-import os
-import tempfile
-import uuid
 from pathlib import Path
-from string import Template
 from typing import Optional, Tuple
 
 from astrbot.api import logger
+from astrbot.api.all import Star
 
 from ..core.models import LiveInfo, UserInfo, VideoInfo
 from ..core.utils import build_live_url, build_video_url, format_number
@@ -41,43 +38,10 @@ LIVE_END_TEXT = """⚫ {nickname} 已下播
 class Renderer:
     """消息渲染器"""
 
-    def __init__(self, rai: bool = False):
+    def __init__(self, star: Star, rai: bool = False):
+        self.star = star
         self.rai = rai
         self._templates = {}
-        self._playwright = None
-        self._browser = None
-
-    async def _get_browser(self):
-        """延迟获取 Playwright 浏览器实例"""
-        if self._browser:
-            return self._browser
-        try:
-            from playwright.async_api import async_playwright
-            self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=True,
-                args=['--no-sandbox', '--disable-setuid-sandbox']
-            )
-            logger.info("Playwright 浏览器已启动")
-            return self._browser
-        except Exception as e:
-            logger.error(f"Playwright 浏览器启动失败: {e}")
-            return None
-
-    async def close(self):
-        """释放 Playwright 资源"""
-        if self._browser:
-            try:
-                await self._browser.close()
-            except Exception:
-                pass
-        if self._playwright:
-            try:
-                await self._playwright.stop()
-            except Exception:
-                pass
-        self._browser = None
-        self._playwright = None
 
     def _load_template(self, name: str) -> Optional[str]:
         """加载 HTML 模板"""
@@ -95,53 +59,35 @@ class Renderer:
             logger.error(f"加载模板 {name} 失败: {e}")
             return None
 
-    async def _html_to_image(self, html: str) -> Optional[str]:
-        """将 HTML 渲染为图片，返回图片路径"""
-        browser = await self._get_browser()
-        if not browser:
+    async def _render_card(self, tmpl_name: str, data: dict) -> Optional[str]:
+        """使用 AstrBot 内置 html_render 渲染卡片图片"""
+        tmpl_str = self._load_template(tmpl_name)
+        if not tmpl_str:
+            return None
+        if not self.rai:
             return None
         try:
-            page = await browser.new_page(
-                viewport={"width": 460, "height": 10},
-                device_scale_factor=2
-            )
-            await page.set_content(html, wait_until="load")
-            # 等待图片加载（最多 5 秒）
-            try:
-                await page.wait_for_load_state("networkidle", timeout=5000)
-            except Exception:
-                pass
-            # 计算内容高度
-            box = await page.evaluate("""
-                () => {
-                    const card = document.querySelector('.card');
-                    if (card) return card.getBoundingClientRect();
-                    return document.body.getBoundingClientRect();
+            img_path = await self.star.html_render(
+                tmpl=tmpl_str,
+                data=data,
+                return_url=False,
+                options={
+                    "full_page": True,
+                    "type": "png",
+                    "scale": "device",
+                    "device_scale_factor_level": "ultra",
                 }
-            """)
-            height = int(box.get('height', 400) + 40)
-            await page.set_viewport_size({"width": 460, "height": height})
-
-            # 渲染为图片
-            img_dir = os.path.join(tempfile.gettempdir(), "dy_push_images")
-            os.makedirs(img_dir, exist_ok=True)
-            img_path = os.path.join(img_dir, f"dy_card_{uuid.uuid4().hex[:8]}.png")
-
-            await page.screenshot(
-                path=img_path,
-                full_page=True,
-                type="png"
             )
-            await page.close()
+            if img_path:
+                logger.info(f"卡片渲染成功: {img_path}")
             return img_path
         except Exception as e:
-            logger.error(f"HTML 渲染图片失败: {e}")
+            logger.warning(f"卡片渲染失败，降级为纯文本: {e}")
             return None
 
     async def render_video(self, work: dict, nickname: str = "") -> Tuple[str, Optional[str]]:
         """
-        渲染视频消息。
-        返回 (消息文本, 可选的图片路径)
+        渲染视频消息。返回 (消息文本, 可选的图片路径)
         """
         author = work.get('author', {})
         nickname = nickname or author.get('nickname', '未知')
@@ -162,27 +108,24 @@ class Renderer:
             collect_count=collect, url=url,
         )
 
-        # 图文模式：尝试渲染 HTML 卡片
-        img_path = None
-        if self.rai:
-            tmpl_str = self._load_template("video_card.html")
-            if tmpl_str:
-                tmpl = Template(tmpl_str)
-                html = tmpl.safe_substitute(
-                    nickname=nickname, avatar=avatar, cover=cover,
-                    title=desc[:100], digg_count=digg,
-                    comment_count=comment, collect_count=collect,
-                    share_count=share, url=url,
-                )
-                img_path = await self._html_to_image(html)
+        img_path = await self._render_card("video_card.html", {
+            "nickname": nickname,
+            "avatar": avatar,
+            "cover": cover,
+            "title": desc[:100],
+            "digg_count": digg,
+            "comment_count": comment,
+            "collect_count": collect,
+            "share_count": share,
+            "url": url,
+        })
 
         return text, img_path
 
     async def render_live(self, record, is_live: bool, title: str = "",
                           work: Optional[dict] = None) -> Tuple[str, Optional[str]]:
         """
-        渲染直播消息。
-        返回 (消息文本, 可选的图片路径)
+        渲染直播消息。返回 (消息文本, 可选的图片路径)
         """
         nickname = record.nickname or record.uid
         live_id = record.room_id or record.uid
@@ -193,11 +136,18 @@ class Renderer:
             nickname=nickname, title=title, url=url,
         )
 
-        img_path = None
-        if self.rai:
-            tmpl_str = self._load_template("live_card.html")
-            if tmpl_str:
-                tmpl = Template(tmpl_str)
+        avatar = ""
+        if work:
+            avatar = work.get('author', {}).get('avatar_thumb', {}).get('url_list', [None])[0] or ""
+
+        img_path = await self._render_card("live_card.html", {
+            "badge_class": "live-badge" if is_live else "offline-badge",
+            "badge_text": "🔴 直播中" if is_live else "⭕ 已下播",
+            "nickname": nickname,
+            "avatar": avatar,
+            "title": title,
+            "url": url,
+        })
                 avatar = ""
                 if work:
                     avatar = work.get('author', {}).get('avatar_thumb', {}).get('url_list', [None])[0] or ""

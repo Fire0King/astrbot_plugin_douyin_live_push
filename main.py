@@ -121,7 +121,7 @@ class Main(Star):
 
         # 3. 初始化渲染器
         self.rai = self.cfg.get("rai", False)
-        self.renderer = Renderer(rai=self.rai)
+        self.renderer = Renderer(star=self, rai=self.rai)
 
         # 4. 初始化订阅服务
         self.subscription_service = SubscriptionService(self.data_manager)
@@ -628,8 +628,6 @@ class Main(Star):
     async def terminate(self):
         """插件卸载时清理"""
         logger.info("抖音推送插件正在卸载...")
-        if hasattr(self, 'renderer'):
-            await self.renderer.close()
         if self._listener_task and not self._listener_task.done():
             self._listener_task.cancel()
             try:

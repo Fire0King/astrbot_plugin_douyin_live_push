@@ -92,21 +92,21 @@ body {
 <body>
 <div class="card">
     <div class="header">
-        <img class="avatar" src="$avatar" alt="avatar" onerror="this.style.display='none'">
+        <img class="avatar" src="{{ avatar }}" alt="avatar" onerror="this.style.display='none'">
         <div class="header-info">
-            <div class="nickname">$nickname</div>
+            <div class="nickname">{{ nickname }}</div>
             <div class="tag">📹 新视频发布 <span class="badge">抖音</span></div>
         </div>
     </div>
-    <img class="cover" src="$cover" alt="cover" onerror="this.style.display='none'">
-    <div class="title">$title</div>
+    <img class="cover" src="{{ cover }}" alt="cover" onerror="this.style.display='none'">
+    <div class="title">{{ title }}</div>
     <div class="stats">
-        <span class="stat-item"><span class="icon">❤️</span> $digg_count</span>
-        <span class="stat-item"><span class="icon">💬</span> $comment_count</span>
-        <span class="stat-item"><span class="icon">⭐</span> $collect_count</span>
-        <span class="stat-item"><span class="icon">🔗</span> $share_count</span>
+        <span class="stat-item"><span class="icon">❤️</span> {{ digg_count }}</span>
+        <span class="stat-item"><span class="icon">💬</span> {{ comment_count }}</span>
+        <span class="stat-item"><span class="icon">⭐</span> {{ collect_count }}</span>
+        <span class="stat-item"><span class="icon">🔗</span> {{ share_count }}</span>
     </div>
-    <div class="url">$url</div>
+    <div class="url">{{ url }}</div>
 </div>
 </body>
 </html>

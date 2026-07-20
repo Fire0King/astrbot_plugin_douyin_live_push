@@ -628,6 +628,8 @@ class Main(Star):
     async def terminate(self):
         """插件卸载时清理"""
         logger.info("抖音推送插件正在卸载...")
+        if hasattr(self, 'renderer'):
+            await self.renderer.close()
         if self._listener_task and not self._listener_task.done():
             self._listener_task.cancel()
             try:

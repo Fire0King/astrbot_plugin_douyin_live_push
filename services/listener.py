@@ -2,7 +2,7 @@ import asyncio
 from typing import Optional
 
 from astrbot.api import logger
-from astrbot.api.message_components import AtAll, Plain
+from astrbot.api.message_components import AtAll, Image, Plain
 from astrbot.core.star import Context
 
 from ..core.data_manager import DataManager
@@ -183,18 +183,19 @@ class DouyinListener:
     async def _push_video_message(self, sub_user: str, record: SubscriptionRecord, work: dict):
         """推送视频消息"""
         try:
-            author = work.get('author', {})
-            nickname = author.get('nickname', record.nickname or record.uid)
+            nickname = work.get('author', {}).get('nickname', record.nickname or record.uid)
             aweme_id = str(work.get('aweme_id', ''))
 
-            # 使用渲染器生成消息
-            content = self.renderer.render_video(work, nickname)
+            # 使用渲染器生成消息（返回文本 + 可选图片）
+            text, img_path = await self.renderer.render_video(work, nickname)
 
             # 构建消息链，支持 @全体成员
             chain = []
             if record.at_all:
                 chain.extend([AtAll(), Plain(" ")])
-            chain.append(Plain(content))
+            if img_path:
+                chain.append(Image.fromFileSystem(img_path))
+            chain.append(Plain(text))
 
             await self.context.send_message(sub_user, chain)
             logger.info(f"已向 {sub_user} 推送视频: {aweme_id}")
@@ -269,15 +270,17 @@ class DouyinListener:
         """推送直播消息"""
         live_id = record.room_id or record.uid
 
-        # 使用渲染器生成消息
-        content = self.renderer.render_live(record, is_live, title)
+        # 使用渲染器生成消息（返回文本 + 可选图片）
+        text, img_path = await self.renderer.render_live(record, is_live, title)
 
         try:
             # 构建消息链，支持 @全体成员
             chain = []
             if is_live and (record.live_atall or record.at_all):
                 chain.extend([AtAll(), Plain(" ")])
-            chain.append(Plain(content))
+            if img_path:
+                chain.append(Image.fromFileSystem(img_path))
+            chain.append(Plain(text))
 
             await self.context.send_message(sub_user, chain)
             logger.info(f"已向 {sub_user} 推送直播状态: {'开播' if is_live else '下播'}")

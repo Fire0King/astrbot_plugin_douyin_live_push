@@ -19,3 +19,7 @@ websocket-client>=1.6.0
 
 # ─── 工具依赖 ───
 python-dotenv>=1.0.0
+
+# ─── 图片渲染（rai=true 时需要） ───
+# playwright 安装后还需执行: playwright install chromium
+# playwright>=1.40.0

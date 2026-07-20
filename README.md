@@ -145,16 +145,6 @@ astrbot_plugin_douyin_live_push/
 
 ---
 
-## ⚙️ 技术原理
-
-1. **认证** — 使用抖音网页版 Cookie 初始化 `DouyinAuth`
-2. **视频监控** — 定时调用 `DouyinAPI.get_user_all_work_info()` 获取用户作品列表，与最后推送的 `aweme_id` 比对
-3. **直播监控** — 定时调用 `DouyinAPI.get_live_info()` 获取直播间状态（`2`=直播中，`4`=未开播）
-4. **消息推送** — 通过 `Context.send_message()` 发送消息链，支持 `AtAll` 组件
-5. **数据持久化** — 使用 `StarTools.get_data_dir()` 标准数据目录存储 `subscriptions.json`
-
----
-
 ## 🚨 常见问题
 
 ### Q: 插件加载失败，提示 `Could not find an available JavaScript runtime`
@@ -171,17 +161,6 @@ sudo apt-get install -y nodejs
 cd AstrBot/data/plugins/astrbot_plugin_douyin_live_push/DouYin_Spider
 npm install
 ```
-
-### Q: 插件加载失败，提示 `不受支持的配置类型 integer`
-
-**原因**：`_conf_schema.json` 中使用了 `"type": "integer"`，应使用 `"type": "int"`。
-
-**解决**：更新插件到最新版本 `v1.2.1`。
-
-### Q: Cookie 过期了怎么办？
-
-抖音 Cookie 有效期不确定（通常几天到几周）。需要重新从浏览器复制 Cookie 并在 WebUI 中更新，然后重载插件。
-
 ---
 
 ## 📄 许可证
@@ -193,3 +172,6 @@ npm install
 - [AstrBot](https://github.com/AstrBotDevs/AstrBot) — 机器人框架
 - [DouYin_Spider](https://github.com/cv-cat/DouYin_Spider) — 抖音爬虫 SDK
 - [astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili) — 参考实现的 B站推送插件
+
+
+ai真的太好用了.jpg

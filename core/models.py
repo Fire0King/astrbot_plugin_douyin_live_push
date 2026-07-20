@@ -20,6 +20,8 @@ class SubscriptionRecord:
     # @全体成员 选项
     at_all: bool = False               # 开播/发视频时 @全体成员
     live_atall: bool = False           # 仅开播时 @全体成员
+    # 已推送的 ID 缓存（防止重复推送）
+    recent_ids: List[str] = field(default_factory=list)  # 最近推送的视频ID列表
     # 过滤选项
     filter_keywords: List[str] = field(default_factory=list)  # 过滤关键词
 

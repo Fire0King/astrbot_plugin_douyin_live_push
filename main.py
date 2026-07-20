@@ -441,8 +441,7 @@ class Main(Star):
                     yield event.plain_result("❌ 未获取到视频数据，请检查 Cookie 或 sec_uid 是否正确")
                     return
 
-                # 按时间排序取最新
-                works.sort(key=lambda w: (w.get('create_time', 0), w.get('aweme_id', '')), reverse=True)
+                # 信任 API 顺序，取第一个（最新）
                 latest = works[0]
                 nickname = latest.get('author', {}).get('nickname', sec_uid)
 

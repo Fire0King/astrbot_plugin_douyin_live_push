@@ -27,32 +27,46 @@ plugin_dir = Path(__file__).parent
 SPIDER_REPO = "https://github.com/cv-cat/DouYin_Spider.git"
 
 
+def _ensure_node_modules(spider_path: Path):
+    """检查并安装 Node.js 依赖"""
+    npm_path = spider_path / "package.json"
+    node_modules = spider_path / "node_modules"
+    if not npm_path.exists():
+        return
+    if node_modules.exists():
+        return  # 已安装
+    logger.info("检测到缺少 node_modules，正在自动安装 Node 依赖...")
+    try:
+        subprocess.run(
+            ["npm", "install"],
+            cwd=str(spider_path.absolute()),
+            check=True, capture_output=True, text=True, timeout=120
+        )
+        logger.info("npm install 完成")
+    except Exception as e:
+        logger.warning(f"npm install 失败: {e}")
+
+
 async def _try_update_spider(spider_path: Path):
-    """后台静默更新 DouYin_Spider 到最新版本"""
+    """后台静默更新 DouYin_Spider"""
     git_dir = spider_path / ".git"
     if not spider_path.exists() or not git_dir.exists():
         return
     try:
         result = subprocess.run(
             ["git", "pull", "--ff-only"],
-            cwd=str(spider_path),
+            cwd=str(spider_path.absolute()),
             capture_output=True, text=True, timeout=30
         )
         if result.returncode == 0 and result.stdout.strip():
-            logger.info(f"DouYin_Spider 已更新: {result.stdout.strip()[:50]}")
-            npm_path = spider_path / "package.json"
-            if npm_path.exists():
-                subprocess.run(
-                    ["npm", "install"],
-                    cwd=str(spider_path),
-                    capture_output=True, text=True, timeout=120
-                )
+            logger.info(f"DouYin_Spider 已更新")
+        # 每次加载都确保 node_modules 存在
+        _ensure_node_modules(spider_path)
     except Exception as e:
         logger.debug(f"DouYin_Spider 自动更新跳过: {e}")
 
 
 # ==================== 自动安装 DouYin_Spider ====================
-SPIDER_REPO = "https://github.com/cv-cat/DouYin_Spider.git"
 spider_path = plugin_dir / "DouYin_Spider"
 _spider_auto_cloned = False
 
@@ -65,18 +79,7 @@ if not spider_path.exists():
         )
         logger.info("DouYin_Spider 克隆成功")
         _spider_auto_cloned = True
-        # 自动安装 Node 依赖
-        npm_path = spider_path / "package.json"
-        if npm_path.exists():
-            try:
-                subprocess.run(
-                    ["npm", "install"],
-                    cwd=str(spider_path),
-                    check=True, capture_output=True, text=True, timeout=120
-                )
-                logger.info("npm install 完成")
-            except Exception as npm_err:
-                logger.warning(f"npm install 失败（可手动运行 npm install）: {npm_err}")
+        _ensure_node_modules(spider_path)
     except Exception as clone_err:
         logger.error(f"自动克隆 DouYin_Spider 失败: {clone_err}")
 
@@ -127,10 +130,13 @@ class Main(Star):
             cfg=self.cfg
         )
 
-        # 5. 后台静默更新 DouYin_Spider
+        # 5. 确保 Node 依赖已安装
+        _ensure_node_modules(spider_path)
+
+        # 6. 后台静默更新 DouYin_Spider
         asyncio.create_task(_try_update_spider(spider_path))
 
-        # 6. 启动后台任务
+        # 7. 启动后台任务
         self._listener_task: Optional[asyncio.Task] = None
         self._start_listener()
 

@@ -148,15 +148,6 @@ class Renderer:
             "title": title,
             "url": url,
         })
-                avatar = ""
-                if work:
-                    avatar = work.get('author', {}).get('avatar_thumb', {}).get('url_list', [None])[0] or ""
-                html = tmpl.safe_substitute(
-                    badge_class="live-badge" if is_live else "offline-badge",
-                    badge_text="🔴 直播中" if is_live else "⭕ 已下播",
-                    nickname=nickname, avatar=avatar, title=title, url=url,
-                )
-                img_path = await self._html_to_image(html)
 
         return text, img_path
 

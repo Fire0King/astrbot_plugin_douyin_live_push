@@ -78,6 +78,18 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Environment (contains cookies/credentials)
+.env
+
+# Node.js
+node_modules/
+
+# IDE
+.vscode/
+
+# DouYin_Spider（单独克隆，详见 README）
+DouYin_Spider/
+
 # IPython
 profile_default/
 ipython_config.py

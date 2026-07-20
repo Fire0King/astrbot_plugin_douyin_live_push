@@ -1,4 +1,0 @@
-{
-    "chat.utilityModel": "deepseek/deepseek-v4-flash",
-    "chat.utilitySmallModel": "deepseek/deepseek-v4-flash"
-}

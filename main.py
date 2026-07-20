@@ -29,23 +29,37 @@ SPIDER_REPO = "https://github.com/cv-cat/DouYin_Spider.git"
 
 
 def _ensure_node_modules(spider_path: Path):
-    """检查并安装 Node.js 依赖"""
+    """检查并安装 Node.js 依赖。若无 node_modules，签名API将不可用。"""
     npm_path = spider_path / "package.json"
     node_modules = spider_path / "node_modules"
     if not npm_path.exists():
+        logger.warning(f"DouYin_Spider 缺少 package.json，可能未正确克隆")
         return
     if node_modules.exists():
-        return  # 已安装
-    logger.info("检测到缺少 node_modules，正在自动安装 Node 依赖...")
+        return
+
+    # 先检查 npm 是否可用
     try:
-        subprocess.run(
+        subprocess.run(["npm", "--version"], capture_output=True, check=True, timeout=10)
+    except Exception:
+        logger.error("npm 未安装或不可用，请手动安装 Node.js: apt install nodejs npm")
+        return
+
+    logger.info("正在自动安装 Node 依赖 (npm install)...")
+    try:
+        result = subprocess.run(
             ["npm", "install"],
             cwd=str(spider_path.absolute()),
-            check=True, capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, timeout=120
         )
-        logger.info("npm install 完成")
+        if result.returncode == 0:
+            logger.info("npm install 完成")
+        else:
+            logger.error(f"npm install 失败: {result.stderr[:200]}")
+    except subprocess.TimeoutExpired:
+        logger.warning("npm install 超时（120秒），可手动 cd DouYin_Spider && npm install")
     except Exception as e:
-        logger.warning(f"npm install 失败: {e}")
+        logger.warning(f"npm install 出错: {e}")
 
 
 async def _try_update_spider(spider_path: Path):

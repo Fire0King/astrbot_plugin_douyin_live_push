@@ -22,13 +22,36 @@ class SubscriptionService:
             live_atall: bool = False,
             filter_keywords: Optional[List[str]] = None
     ) -> Tuple[bool, str]:
-        """添加订阅"""
-        # 检查是否已存在
-        existing = self.data_manager.get_all_subscriptions().get(sub_user, [])
-        for r in existing:
-            if r.uid == uid and r.sub_type == sub_type:
-                return False, f"⚠️ 已存在订阅: {uid} ({sub_type})"
+        """添加或更新订阅（已存在则更新 @全体 标志）"""
+        type_name = "视频" if sub_type == 'video' else "直播"
 
+        # 检查是否已存在
+        existing = self.data_manager.get_subscription(sub_user, uid, sub_type)
+        if existing:
+            # 已存在 → 更新 @全体 标志
+            updates = {}
+            if at_all:
+                updates['at_all'] = True
+                updates['live_atall'] = False
+            elif live_atall:
+                updates['live_atall'] = True
+                updates['at_all'] = False
+            else:
+                updates['at_all'] = False
+                updates['live_atall'] = False
+            if sec_uid:
+                updates['sec_uid'] = sec_uid
+            if room_id:
+                updates['room_id'] = room_id
+            if nickname:
+                updates['nickname'] = nickname
+
+            self.data_manager.update_subscription(sub_user, uid, sub_type, **updates)
+
+            extra = " [@全体成员]" if at_all else (" [开播@全体]" if live_atall else "")
+            return True, f"✅ 已更新{type_name}订阅: {nickname or uid}{extra}"
+
+        # 不存在 → 新建订阅
         record = SubscriptionRecord(
             sub_user=sub_user,
             uid=uid,
@@ -42,12 +65,7 @@ class SubscriptionService:
         )
         success = self.data_manager.add_subscription(sub_user, record)
         if success:
-            type_name = "视频" if sub_type == 'video' else "直播"
-            extra = ""
-            if at_all:
-                extra = " [@全体成员]"
-            elif live_atall:
-                extra = " [开播@全体]"
+            extra = " [@全体成员]" if at_all else (" [开播@全体]" if live_atall else "")
             return True, f"✅ 已订阅{type_name}监控: {nickname or uid}{extra}"
         else:
             return False, f"⚠️ 添加订阅失败: {uid}"

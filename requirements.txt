@@ -1,2 +1,31 @@
-git+https://github.com/mafqla/douyin-api.git
-aiohttp>=3.8.0
+# ============================================================
+# astrbot_plugin_douyin_live_push — 抖音推送插件
+# ============================================================
+#
+# 该项目依赖 DouYin_Spider 子模块（位于 DouYin_Spider/ 目录）。
+# 请确保在运行前安装以下依赖：
+#
+#   pip install -r requirements.txt
+#   cd DouYin_Spider && npm install    # JS 签名引擎需要 Node.js
+#
+# ============================================================
+
+# ─── 必需: AstrBot 框架 ───
+# AstrBot 自动提供，无需额外安装
+
+# ─── 必需: DouYin_Spider 核心依赖 ───
+requests>=2.28.0
+beautifulsoup4>=4.12.0
+protobuf>=4.25.0
+protobuf3_to_dict>=0.1.5
+PyExecJS>=1.5.1
+websocket-client>=1.6.0
+
+# ─── 必需: 工具依赖 ───
+python-dotenv>=1.0.0
+
+# ─── 可选: DouYin_Spider 扩展功能 ───
+# openpyxl>=3.1.0    # Excel 数据导出
+# retry>=0.9.2       # 请求重试
+# loguru>=0.7.0      # 日志美化
+# websockets>=12.0   # WebSocket 客户端

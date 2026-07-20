@@ -1,328 +1,426 @@
 import asyncio
-import json
-import os
-from typing import List
-from dataclasses import dataclass, asdict
-from urllib.parse import urlencode
+import sys
+from pathlib import Path
+from typing import Optional
 
-import aiohttp
+from astrbot.api import logger
 from astrbot.api.all import *
-from astrbot.api import AstrBotConfig, logger
+from astrbot.api.event import AstrMessageEvent, MessageEventResult
+from astrbot.api.event.filter import command, permission_type, PermissionType
 from astrbot.core.star.filter.command import GreedyStr
 
-# 导入抖音签名库
-from utils.request import Request, sign
+from .core.data_manager import DataManager
+from .core.models import SubscriptionRecord
+from .core.utils import (
+    build_user_url,
+    parse_live_room_id,
+    parse_sec_uid,
+    format_number,
+)
+from .services.listener import DouyinAuthWrapper, DouyinListener
+from .services.subscription_service import SubscriptionService
 
-# ================== 数据模型 ==================
-@dataclass
-class Subscription:
-    room_id: str           # 用户ID（同时也是房间ID）
-    user_name: str         # 主播昵称
-    group_id: str          # 群组/会话ID
-    at_all: bool = False
-    last_is_live: bool = False
+# 插件根目录
+plugin_dir = Path(__file__).parent
 
-@dataclass
-class LiveStatus:
-    is_live: bool
-    title: str = ""
-    viewer_count: int = 0
-    cover: str = ""
-    duration: str = ""      # 下播时可用
+# 添加 DouYin_Spider 子模块到 sys.path
+spider_path = plugin_dir / "DouYin_Spider"
+if str(spider_path) not in sys.path:
+    sys.path.insert(0, str(spider_path))
 
-
-# ================== 数据管理器 ==================
-class DataManager:
-    def __init__(self, data_dir: str = "data/douyin_live"):
-        self.data_dir = data_dir
-        os.makedirs(self.data_dir, exist_ok=True)
-        self.subscriptions_file = os.path.join(self.data_dir, "subscriptions.json")
-        self._subscriptions: List[Subscription] = []
-        self._load()
-
-    def _load(self):
-        if os.path.exists(self.subscriptions_file):
-            with open(self.subscriptions_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                self._subscriptions = [Subscription(**item) for item in data]
-
-    def _save(self):
-        with open(self.subscriptions_file, 'w', encoding='utf-8') as f:
-            json.dump([asdict(s) for s in self._subscriptions], f, ensure_ascii=False, indent=2)
-
-    def get_all(self) -> List[Subscription]:
-        return self._subscriptions.copy()
-
-    def get_by_group(self, group_id: str) -> List[Subscription]:
-        return [s for s in self._subscriptions if s.group_id == group_id]
-
-    def add(self, room_id: str, user_name: str, group_id: str, at_all: bool = False) -> bool:
-        for s in self._subscriptions:
-            if s.room_id == room_id and s.group_id == group_id:
-                return False
-        self._subscriptions.append(Subscription(room_id, user_name, group_id, at_all, False))
-        self._save()
-        return True
-
-    def remove(self, room_id: str, group_id: str) -> bool:
-        orig = len(self._subscriptions)
-        self._subscriptions = [s for s in self._subscriptions if not (s.room_id == room_id and s.group_id == group_id)]
-        if len(self._subscriptions) != orig:
-            self._save()
-            return True
-        return False
-
-    def update_status(self, room_id: str, group_id: str, is_live: bool):
-        for s in self._subscriptions:
-            if s.room_id == room_id and s.group_id == group_id:
-                s.last_is_live = is_live
-                self._save()
-                return
-
-    def update_at_all(self, room_id: str, group_id: str, at_all: bool):
-        for s in self._subscriptions:
-            if s.room_id == room_id and s.group_id == group_id:
-                s.at_all = at_all
-                self._save()
-                return
+try:
+    from dy_apis.douyin_api import DouyinAPI
+    _HAS_SPIDER = True
+except ImportError as e:
+    logger.error(f"导入 DouYin_Spider 失败: {e}")
+    DouyinAPI = None
+    _HAS_SPIDER = False
 
 
-# ================== 抖音客户端（纯Python签名） ==================
-class DouyinClient:
-    def __init__(self, cookie: str):
-        self.cookie = cookie
-        self.request = Request(cookie=cookie) if cookie else None
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Cookie": cookie,
-            "Referer": "https://www.douyin.com/",
-            "Accept": "application/json, text/plain, */*",
-        }
-
-    async def _get_signed_url(self, url: str) -> str:
-        """使用签名库对URL附加签名参数"""
-        if not self.request:
-            return url
-        # 签名库的 sign 函数返回类似于 "&X-Bogus=xxx&..." 的字符串
-        signed = sign(url, self.headers["User-Agent"])
-        # 如果返回的字符串以&开头，直接拼接
-        if signed:
-            return url + signed
-        return url
-
-    async def get_user_info(self, user_id: str) -> tuple:
-        """
-        获取用户昵称和真实的房间ID（其实就是user_id本身）
-        返回 (昵称, room_id)
-        """
-        if not self.request:
-            raise Exception("未配置抖音Cookie，无法获取用户信息")
-
-        # 使用Request类自动签名
-        # 注意：Request的base_url是https://www.douyin.com
-        # 但getJSON方法只接受path，我们传完整URL会出错，所以用path
-        # 为了保险，我们直接使用内部方法
-        # 简便方法：调用其内部session发请求，但可能有签名问题。
-        # 建议直接使用Request.getJSON
-        try:
-            # 先临时修改base_url以防万一
-            old_base = self.request.base_url
-            self.request.base_url = "https://www.douyin.com"
-            result = await self.request.getJSON(
-                "/web/api/v2/user/info/",
-                params={"user_id": user_id}
-            )
-            self.request.base_url = old_base
-        except Exception as e:
-            raise Exception(f"请求用户信息失败: {e}")
-
-        if result.get("status_code") != 0:
-            raise Exception(f"接口返回错误: {result}")
-        user_info = result.get("user_info", {})
-        nickname = user_info.get("nickname", "未知")
-        # 房间ID通常和user_id相同（数字ID），如果是短号，可能需要转换，这里简化
-        return nickname, user_id
-
-    async def get_live_status(self, room_id: str) -> LiveStatus:
-        """
-        获取直播间状态
-        """
-        if not self.request:
-            # 没有cookie，尝试使用普通请求+签名（但可能缺少cookie导致失败）
-            # 此处直接返回未开播
-            logger.warning("未配置Cookie，无法获取直播状态")
-            return LiveStatus(is_live=False)
-
-        # 直播接口使用 live.douyin.com
-        try:
-            old_base = self.request.base_url
-            self.request.base_url = "https://live.douyin.com"
-            result = await self.request.getJSON(
-                "/webcast/room/info/",
-                params={"room_id": room_id}
-            )
-            self.request.base_url = old_base
-        except Exception as e:
-            logger.error(f"请求直播状态失败: {e}")
-            return LiveStatus(is_live=False)
-
-        if result.get("status_code") != 0:
-            logger.warning(f"直播接口返回错误: {result}")
-            return LiveStatus(is_live=False)
-
-        room_data = result.get("data", {}).get("room", {})
-        status = room_data.get("status")  # 2=直播中
-        if status == 2:
-            title = room_data.get("title", "")
-            viewer_count = room_data.get("user_count", 0)
-            cover = room_data.get("cover", {}).get("url_list", [""])[0]
-            return LiveStatus(is_live=True, title=title, viewer_count=viewer_count, cover=cover)
-        else:
-            # 未开播或已下播
-            return LiveStatus(is_live=False)
-
-
-# ================== 插件主类 ==================
-@register("astrbot_plugin_douyin_live", "你的名字", "抖音直播监控", "1.0.0", "")
-class DouyinLivePlugin(Star):
+@register(
+    "astrbot_plugin_douyin_live_push",
+    "Fire_King",
+    "抖音视频更新与直播间上下播推送插件",
+    "1.2.0",
+    "https://github.com/Fire0King/astrbot_plugin_douyin_live_push"
+)
+class Main(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
-        self.context = context
         self.cfg = config
+        self.context = context
 
-        self.check_interval = self.cfg.get("check_interval", 60)
-        self.default_at_all = self.cfg.get("default_at_all", False)
-        self.cookie = self.cfg.get("douyin_cookie", "")
-
+        # 1. 初始化数据管理器（使用标准数据目录）
         self.data_manager = DataManager()
-        self.douyin_client = DouyinClient(self.cookie)
 
-        # 启动后台监控
-        self._monitor_task = asyncio.create_task(self._monitor_loop())
+        # 2. 初始化抖音认证
+        self.dy_auth = DouyinAuthWrapper()
+        self.live_auth = DouyinAuthWrapper()
+        self._init_auth()
 
-    async def _monitor_loop(self):
-        while True:
-            try:
-                subs = self.data_manager.get_all()
-                for sub in subs:
-                    try:
-                        status = await self.douyin_client.get_live_status(sub.room_id)
-                        if status.is_live and not sub.last_is_live:
-                            await self._notify_live_start(sub, status)
-                        elif not status.is_live and sub.last_is_live:
-                            await self._notify_live_end(sub, status)
-                        self.data_manager.update_status(sub.room_id, sub.group_id, status.is_live)
-                    except Exception as e:
-                        logger.error(f"检查 {sub.room_id} 出错: {e}")
-                await asyncio.sleep(self.check_interval)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"监控循环异常: {e}")
-                await asyncio.sleep(self.check_interval)
+        # 3. 初始化订阅服务
+        self.subscription_service = SubscriptionService(self.data_manager)
 
-    async def _notify_live_start(self, sub: Subscription, status: LiveStatus):
-        at_all = sub.at_all or self.default_at_all
-        msg = (
-            f"🎉 {sub.user_name} 开播啦！\n\n"
-            f"📺 标题：{status.title}\n"
-            f"👀 观看人数：{status.viewer_count}\n"
-            f"🔗 直播间：https://live.douyin.com/{sub.room_id}"
+        # 4. 初始化监听服务
+        self.listener = DouyinListener(
+            context=self.context,
+            data_manager=self.data_manager,
+            dy_auth=self.dy_auth,
+            live_auth=self.live_auth,
+            cfg=self.cfg
         )
-        chain = MessageChain()
-        if at_all:
-            chain.append(AtAll())
-        chain.append(Plain(msg))
-        await self.context.send_message(sub.group_id, chain)
 
-    async def _notify_live_end(self, sub: Subscription, status: LiveStatus):
-        msg = (
-            f"🛑 {sub.user_name} 已下播\n\n"
-            f"📊 直播时长：{status.duration}\n"
-            f"👀 最高观看：{status.viewer_count}"
-        )
-        chain = MessageChain([Plain(msg)])
-        await self.context.send_message(sub.group_id, chain)
+        # 5. 启动后台任务
+        self._listener_task: Optional[asyncio.Task] = None
+        self._start_listener()
 
-    # ================== 指令 ==================
-    @command("dy_sub")
-    async def sub(self, event: AstrMessageEvent, room_id: GreedyStr):
-        """订阅抖音主播（使用用户ID）"""
-        if not room_id:
-            yield event.make_result().message("请提供抖音用户ID（数字）")
-            return
-        group_id = event.get_session_id()
-        try:
-            nickname, real_room_id = await self.douyin_client.get_user_info(room_id)
-        except Exception as e:
-            yield event.make_result().message(f"获取用户信息失败: {e}")
-            return
+    def _init_auth(self):
+        """从配置初始化抖音认证"""
+        cookie_main = self.cfg.get("douyin_cookie", "").strip()
+        cookie_live = self.cfg.get("douyin_live_cookie", "").strip()
+        if not cookie_live:
+            cookie_live = cookie_main
 
-        success = self.data_manager.add(real_room_id, nickname, group_id, self.default_at_all)
-        if success:
-            yield event.make_result().message(f"✅ 已订阅 {nickname} 的直播通知")
+        if cookie_main:
+            self.dy_auth.setup(cookie_main)
+        if cookie_live:
+            self.live_auth.setup(cookie_live)
         else:
-            yield event.make_result().message("⚠️ 该主播已被订阅")
+            self.live_auth = self.dy_auth
+
+        if not self.dy_auth.auth:
+            logger.warning("⚠️ 抖音 Cookie 未配置，请先在插件设置中配置 douyin_cookie")
+
+    def _start_listener(self):
+        """启动后台监听"""
+        if self._listener_task and not self._listener_task.done():
+            return
+        self._listener_task = asyncio.create_task(self.listener.start())
+        logger.info("后台监听任务已启动")
+
+    def _restart_listener(self):
+        """重启监听服务"""
+        if self._listener_task and not self._listener_task.done():
+            self._listener_task.cancel()
+        self._listener_task = asyncio.create_task(self.listener.start())
+        logger.info("监听服务已重启")
+
+    # ==================== 用户命令 ====================
+
+    @command("dy_sub")
+    async def dy_sub(self, event: AstrMessageEvent, raw_args: GreedyStr):
+        """
+        订阅抖音用户的视频更新和直播状态。
+
+        用法:
+          /dy_sub <URL/sec_uid> [at_all|live_atall]     — 订阅视频+直播
+          /dy_sub video <URL/sec_uid> [at_all]           — 仅订阅视频
+          /dy_sub live <直播间ID> [live_atall]            — 仅订阅直播
+
+        选项说明:
+          at_all      — 开播/发视频时 @全体成员（仅管理员）
+          live_atall  — 仅开播时 @全体成员（仅管理员）
+
+        示例:
+          /dy_sub https://www.douyin.com/user/MS4wLjABAAAA... at_all
+          /dy_sub video MS4wLjABAAAA... live_atall
+          /dy_sub live 852953608964 live_atall
+        """
+        sub_user = event.unified_msg_origin
+        args = raw_args.strip().split() if raw_args.strip() else []
+
+        if not args:
+            yield event.plain_result(
+                "❌ 请提供订阅参数。\n"
+                "用法:\n"
+                "  /dy_sub <URL/sec_uid> [at_all|live_atall]\n"
+                "  /dy_sub video <URL/sec_uid> [at_all]\n"
+                "  /dy_sub live <直播间ID> [live_atall]\n"
+                "选项: at_all=全部@全体, live_atall=仅开播@全体"
+            )
+            return
+
+        # 解析 @全体 选项
+        at_all = False
+        live_atall = False
+        options = {'at_all', 'live_atall'}
+        filtered_args = [a for a in args if a not in options]
+        for a in args:
+            if a == 'at_all':
+                at_all = True
+            elif a == 'live_atall':
+                live_atall = True
+
+        # 权限检查：只有管理员可以设置 @全体
+        if (at_all or live_atall) and not event.is_admin():
+            yield event.plain_result("❌ 权限不足：只有管理员可以设置 @全体成员 相关选项。")
+            return
+
+        # 解析 sub_type 和 target
+        sub_type = 'both'
+        target = filtered_args[0]
+
+        if target in ('video', 'live', 'both') and len(filtered_args) > 1:
+            sub_type = target
+            target = filtered_args[1]
+
+        # 尝试解析 sec_uid 或 直播间ID
+        sec_uid = parse_sec_uid(target)
+        live_id = parse_live_room_id(target) if sub_type in ('live', 'both') else None
+
+        results = []
+
+        if sub_type in ('video', 'both') and sec_uid:
+            nickname = await self._fetch_user_nickname(sec_uid)
+            uid = sec_uid
+            success, msg = await self.subscription_service.add_subscription(
+                sub_user, uid, 'video',
+                sec_uid=sec_uid,
+                nickname=nickname or sec_uid,
+                at_all=at_all,
+                live_atall=live_atall,
+            )
+            results.append(msg)
+
+        if sub_type in ('live', 'both'):
+            if sub_type == 'live' and live_id:
+                uid = f"live_{live_id}"
+                success, msg = await self.subscription_service.add_subscription(
+                    sub_user, uid, 'live',
+                    room_id=live_id,
+                    nickname=f"直播间 {live_id}",
+                    at_all=at_all,
+                    live_atall=live_atall,
+                )
+                results.append(msg)
+            elif sub_type == 'live' and not live_id:
+                results.append("❌ 未识别到有效的直播间ID")
+
+        if not results:
+            yield event.plain_result("❌ 无法识别输入，请提供正确的抖音用户URL、sec_uid 或直播间ID")
+            return
+
+        self._restart_listener()
+        yield event.plain_result("\n".join(results))
+
+    async def _fetch_user_nickname(self, sec_uid: str) -> Optional[str]:
+        """从抖音 API 获取用户昵称"""
+        auth = self.dy_auth.auth
+        if not auth or not DouyinAPI:
+            return None
+        try:
+            user_url = build_user_url(sec_uid)
+            info = await asyncio.to_thread(
+                DouyinAPI.get_user_info, auth, user_url
+            )
+            if info and 'user' in info:
+                return info['user'].get('nickname', '')
+        except Exception as e:
+            logger.error(f"获取用户信息失败: {e}")
+        return None
 
     @command("dy_unsub")
-    async def unsub(self, event: AstrMessageEvent, room_id: GreedyStr):
-        if not room_id:
-            yield event.make_result().message("请提供抖音用户ID")
+    async def dy_unsub(self, event: AstrMessageEvent, raw_args: GreedyStr):
+        """
+        取消订阅。
+
+        用法: /dy_unsub <sec_uid/直播间ID> [video/live]
+        """
+        sub_user = event.unified_msg_origin
+        args = raw_args.strip().split(None, 1) if raw_args.strip() else []
+
+        if not args:
+            yield event.plain_result("❌ 请提供要取消订阅的ID。\n用法: /dy_unsub <sec_uid/直播间ID> [video/live]")
             return
-        group_id = event.get_session_id()
-        if self.data_manager.remove(room_id, group_id):
-            yield event.make_result().message("✅ 已取消订阅")
+
+        uid = args[0]
+        sub_type = args[1] if len(args) > 1 else None
+
+        if sub_type:
+            success, msg = await self.subscription_service.remove_subscription(
+                sub_user, uid, sub_type
+            )
+            if success:
+                self._restart_listener()
+            yield event.plain_result(msg)
         else:
-            yield event.make_result().message("⚠️ 未找到该订阅")
+            # 尝试移除 video 和 live
+            results = []
+            for st in ['video', 'live']:
+                success, msg = await self.subscription_service.remove_subscription(
+                    sub_user, uid, st
+                )
+                if success:
+                    results.append(msg)
+            if results:
+                self._restart_listener()
+                yield event.plain_result("\n".join(results))
+            else:
+                yield event.plain_result(f"⚠️ 未找到 {uid} 的订阅")
 
     @command("dy_list")
-    async def list_sub(self, event: AstrMessageEvent):
-        group_id = event.get_session_id()
-        subs = self.data_manager.get_by_group(group_id)
-        if not subs:
-            yield event.make_result().message("当前群没有订阅任何主播")
-            return
-        lines = ["📋 本群订阅列表："]
-        for s in subs:
-            at_status = "✅" if s.at_all else "❌"
-            lines.append(f"- {s.user_name} (ID: {s.room_id}) @全体: {at_status}")
-        yield event.make_result().message("\n".join(lines))
+    async def dy_list(self, event: AstrMessageEvent):
+        """列出当前会话的所有订阅"""
+        sub_user = event.unified_msg_origin
+        records = await self.subscription_service.list_subscriptions(sub_user)
 
-    @command("dy_at_on")
+        if not records:
+            yield event.plain_result("📋 当前没有订阅")
+            return
+
+        msg_parts = ["📋 当前订阅列表\n"]
+        for i, r in enumerate(records, 1):
+            type_tag = "📹视频" if r.sub_type == 'video' else "🔴直播"
+            status = " 🟢直播中" if r.is_live else ""
+            at_tag = ""
+            if r.at_all:
+                at_tag = " [@全体]"
+            elif r.live_atall:
+                at_tag = " [开播@全体]"
+            nickname = r.nickname or r.uid
+            msg_parts.append(f"{i}. {type_tag} {nickname}{at_tag}{status}")
+
+        yield event.plain_result("\n".join(msg_parts))
+
+    @command("dy_clear")
     @permission_type(PermissionType.ADMIN)
-    async def at_on(self, event: AstrMessageEvent, room_id: GreedyStr):
-        if not room_id:
-            yield event.make_result().message("请提供抖音用户ID")
-            return
-        group_id = event.get_session_id()
-        subs = self.data_manager.get_by_group(group_id)
-        for s in subs:
-            if s.room_id == room_id:
-                self.data_manager.update_at_all(room_id, group_id, True)
-                yield event.make_result().message("✅ 已开启 @全体")
-                return
-        yield event.make_result().message("⚠️ 未找到该订阅")
+    async def dy_clear(self, event: AstrMessageEvent):
+        """清空当前会话的所有订阅（管理员）"""
+        sub_user = event.unified_msg_origin
+        msg = await self.subscription_service.remove_all_for_user(sub_user)
+        self._restart_listener()
+        yield event.plain_result(msg)
 
-    @command("dy_at_off")
+    @command("dy_info")
+    async def dy_info(self, event: AstrMessageEvent, raw_args: GreedyStr):
+        """
+        获取抖音用户信息。
+
+        用法: /dy_info <抖音用户URL或sec_uid>
+        """
+        target = raw_args.strip()
+        if not target:
+            yield event.plain_result("❌ 请提供抖音用户URL或sec_uid")
+            return
+
+        sec_uid = parse_sec_uid(target)
+        if not sec_uid:
+            yield event.plain_result("❌ 无法识别，请提供有效的抖音用户URL或sec_uid")
+            return
+
+        auth = self.dy_auth.auth
+        if not auth or not DouyinAPI:
+            yield event.plain_result("❌ 抖音 Cookie 未配置，无法查询用户信息")
+            return
+
+        try:
+            user_url = build_user_url(sec_uid)
+            info = await asyncio.to_thread(
+                DouyinAPI.get_user_info, auth, user_url
+            )
+
+            if not info or 'user' not in info:
+                yield event.plain_result("❌ 获取用户信息失败，请检查 Cookie 是否有效")
+                return
+
+            user = info['user']
+            nickname = user.get('nickname', '未知')
+            signature = user.get('signature', '这个人很懒，什么都没写')
+            follower = format_number(user.get('follower_count', 0))
+            following = format_number(user.get('following_count', 0))
+            total_favorited = format_number(user.get('total_favorited', 0))
+            aweme_count = user.get('aweme_count', 0)
+
+            msg = (
+                f"👤 {nickname}\n"
+                f"📝 {signature[:100]}\n"
+                f"👥 粉丝: {follower}  ·  关注: {following}\n"
+                f"❤️ 获赞: {total_favorited}  ·  作品: {aweme_count}\n"
+                f"🔗 {user_url}"
+            )
+            yield event.plain_result(msg)
+
+        except Exception as e:
+            logger.error(f"获取用户信息失败: {e}")
+            yield event.plain_result(f"❌ 获取用户信息失败: {str(e)}")
+
+    # ==================== 管理员命令 ====================
+
+    @command("dy_global_list")
     @permission_type(PermissionType.ADMIN)
-    async def at_off(self, event: AstrMessageEvent, room_id: GreedyStr):
-        if not room_id:
-            yield event.make_result().message("请提供抖音用户ID")
+    async def dy_global_list(self, event: AstrMessageEvent):
+        """查看所有会话的订阅（管理员）"""
+        all_subs = self.data_manager.get_all_subscriptions()
+        if not all_subs or not any(all_subs.values()):
+            yield event.plain_result("📋 暂无任何订阅")
             return
-        group_id = event.get_session_id()
-        subs = self.data_manager.get_by_group(group_id)
-        for s in subs:
-            if s.room_id == room_id:
-                self.data_manager.update_at_all(room_id, group_id, False)
-                yield event.make_result().message("✅ 已关闭 @全体")
-                return
-        yield event.make_result().message("⚠️ 未找到该订阅")
 
-    # ================== 清理 ==================
+        msg_parts = ["📋 全局订阅列表"]
+        total = 0
+        for sub_user, records in all_subs.items():
+            if records:
+                msg_parts.append(f"\n📌 {sub_user}:")
+                for r in records:
+                    total += 1
+                    tag = "📹" if r.sub_type == 'video' else "🔴"
+                    name = r.nickname or r.uid
+                    status = " 🟢" if r.is_live else ""
+                    msg_parts.append(f"  {tag} {name} ({r.sub_type}){status}")
+        msg_parts.append(f"\n总计: {total} 个订阅")
+        yield event.plain_result("".join(msg_parts))
+
+    @command("dy_global_unsub")
+    @permission_type(PermissionType.ADMIN)
+    async def dy_global_unsub(self, event: AstrMessageEvent, raw_args: GreedyStr):
+        """
+        删除指定会话指定用户的订阅（管理员）。
+
+        用法: /dy_global_unsub <会话UMO> <UID>
+        """
+        args = raw_args.strip().split() if raw_args.strip() else []
+        if len(args) < 2:
+            yield event.plain_result("❌ 用法: /dy_global_unsub <会话UMO> <UID>")
+            return
+        target_user = args[0]
+        target_uid = args[1]
+        for st in ['video', 'live']:
+            self.data_manager.remove_subscription(target_user, target_uid, st)
+        self._restart_listener()
+        yield event.plain_result(f"✅ 已移除 {target_user} 的 {target_uid} 订阅")
+
+    @command("dy_status")
+    @permission_type(PermissionType.ADMIN)
+    async def dy_status(self, event: AstrMessageEvent):
+        """查看插件运行状态（管理员）"""
+        cookie_ok = "✅ 已配置" if self.dy_auth.auth else "❌ 未配置"
+        live_ok = "✅ 已配置" if self.live_auth.auth else "❌ 未配置"
+        total_subs = self.subscription_service.get_subscription_count()
+        running = "🟢 运行中" if (self._listener_task and not self._listener_task.done()) else "🔴 已停止"
+
+        msg = (
+            f"📊 插件运行状态\n"
+            f"{'=' * 20}\n"
+            f"运行状态: {running}\n"
+            f"Cookie: {cookie_ok}\n"
+            f"直播Cookie: {live_ok}\n"
+            f"轮询间隔: {self.cfg.get('poll_interval', 60)}秒\n"
+            f"直播监控: {'🟢 开启' if self.cfg.get('enable_live_monitor', True) else '🔴 关闭'}\n"
+            f"订阅总数: {total_subs}\n"
+            f"DouYin_Spider: {'✅ 已加载' if _HAS_SPIDER else '❌ 未加载'}"
+        )
+        yield event.plain_result(msg)
+
+    # ==================== 生命周期 ====================
+
     async def terminate(self):
-        if self._monitor_task:
-            self._monitor_task.cancel()
+        """插件卸载时清理"""
+        logger.info("抖音推送插件正在卸载...")
+        if self._listener_task and not self._listener_task.done():
+            self._listener_task.cancel()
             try:
-                await self._monitor_task
-            except asyncio.CancelledError:
+                await self._listener_task
+            except (asyncio.CancelledError, Exception):
                 pass
+        if hasattr(self, 'listener'):
+            await self.listener.stop()
+        logger.info("抖音推送插件已卸载")

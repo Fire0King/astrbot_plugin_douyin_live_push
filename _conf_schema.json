@@ -1,21 +1,25 @@
 {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "check_interval": {
-            "type": "integer",
-            "default": 60,
-            "description": "直播状态检测间隔（秒）"
-        },
-        "default_at_all": {
-            "type": "boolean",
-            "default": false,
-            "description": "新订阅时是否默认开启@全体成员"
-        },
-        "douyin_cookie": {
-            "type": "string",
-            "default": "",
-            "description": "抖音网页版登录后的Cookie（必填）"
-        }
+    "douyin_cookie": {
+        "description": "抖音网页版 Cookie（从 www.douyin.com 获取）",
+        "type": "string",
+        "hint": "登录抖音网页版后，从浏览器开发者工具中复制完整 Cookie 字符串",
+        "default": ""
+    },
+    "douyin_live_cookie": {
+        "description": "抖音直播间 Cookie（从 live.douyin.com 获取，可不填则使用 douyin_cookie）",
+        "type": "string",
+        "hint": "若不填写则自动使用 douyin_cookie",
+        "default": ""
+    },
+    "poll_interval": {
+        "description": "监控轮询间隔（秒），最小 10 秒，建议 60 秒以上避免风控",
+        "type": "integer",
+        "default": 60,
+        "minimum": 10
+    },
+    "enable_live_monitor": {
+        "description": "是否启用直播间上下播监控",
+        "type": "bool",
+        "default": true
     }
 }

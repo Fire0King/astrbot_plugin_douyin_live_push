@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -23,10 +24,66 @@ from .services.subscription_service import SubscriptionService
 # 插件根目录
 plugin_dir = Path(__file__).parent
 
-# 添加 DouYin_Spider 子模块到 sys.path
+# ==================== 自动安装 DouYin_Spider ====================
+SPIDER_REPO = "https://github.com/cv-cat/DouYin_Spider.git"
 spider_path = plugin_dir / "DouYin_Spider"
+_spider_auto_cloned = False
+
+if not spider_path.exists():
+    logger.info(f"未检测到 DouYin_Spider，正在自动克隆...")
+    try:
+        subprocess.run(
+            ["git", "clone", SPIDER_REPO, str(spider_path)],
+            check=True, capture_output=True, text=True, timeout=60
+        )
+        logger.info("DouYin_Spider 克隆成功")
+        _spider_auto_cloned = True
+        # 自动安装 Node 依赖
+        npm_path = spider_path / "package.json"
+        if npm_path.exists():
+            try:
+                subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(spider_path),
+                    check=True, capture_output=True, text=True, timeout=120
+                )
+                logger.info("npm install 完成")
+            except Exception as npm_err:
+                logger.warning(f"npm install 失败（可手动运行 npm install）: {npm_err}")
+    except Exception as clone_err:
+        logger.error(f"自动克隆 DouYin_Spider 失败: {clone_err}")
+
+# 尝试更新 DouYin_Spider（静默拉取最新代码）
+_ = asyncio.create_task(_try_update_spider(spider_path))
+
+# 添加 DouYin_Spider 子模块到 sys.path
 if str(spider_path) not in sys.path:
     sys.path.insert(0, str(spider_path))
+
+async def _try_update_spider(spider_path: Path):
+    """后台静默更新 DouYin_Spider 到最新版本"""
+    git_dir = spider_path / ".git"
+    if not spider_path.exists() or not git_dir.exists():
+        return
+    try:
+        result = subprocess.run(
+            ["git", "pull", "--ff-only"],
+            cwd=str(spider_path),
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            logger.info(f"DouYin_Spider 已更新: {result.stdout.strip()[:50]}")
+            # 更新后重新安装 Node 依赖
+            npm_path = spider_path / "package.json"
+            if npm_path.exists():
+                subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(spider_path),
+                    capture_output=True, text=True, timeout=120
+                )
+    except Exception as e:
+        logger.debug(f"DouYin_Spider 自动更新跳过: {e}")
+
 
 try:
     from dy_apis.douyin_api import DouyinAPI
@@ -387,6 +444,54 @@ class Main(Star):
             self.data_manager.remove_subscription(target_user, target_uid, st)
         self._restart_listener()
         yield event.plain_result(f"✅ 已移除 {target_user} 的 {target_uid} 订阅")
+
+    @command("dy_spider_update")
+    @permission_type(PermissionType.ADMIN)
+    async def dy_spider_update(self, event: AstrMessageEvent):
+        """手动更新 DouYin_Spider 到最新版本（管理员）"""
+        spider_path = plugin_dir / "DouYin_Spider"
+        git_dir = spider_path / ".git"
+        if not spider_path.exists() or not git_dir.exists():
+            yield event.plain_result("❌ DouYin_Spider 目录不存在或不是 git 仓库")
+            return
+
+        try:
+            yield event.plain_result("⏳ 正在更新 DouYin_Spider...")
+            result = subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=str(spider_path),
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                yield event.plain_result(f"❌ 更新失败: {result.stderr[:200]}")
+                return
+
+            output = result.stdout.strip()
+            if "Already up to date" in output:
+                msg = "✅ DouYin_Spider 已是最新版本"
+            else:
+                msg = f"✅ DouYin_Spider 更新成功:\n{output[:200]}"
+
+            # 重新安装 Node 依赖
+            npm_path = spider_path / "package.json"
+            if npm_path.exists():
+                msg += "\n⏳ 正在更新 Node 依赖..."
+                npm_result = subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(spider_path),
+                    capture_output=True, text=True, timeout=120
+                )
+                if npm_result.returncode == 0:
+                    msg += "\n✅ npm install 完成"
+                else:
+                    msg += f"\n⚠️ npm install 可能有问题: {npm_result.stderr[:100]}"
+
+            yield event.plain_result(msg)
+
+        except subprocess.TimeoutExpired:
+            yield event.plain_result("❌ 更新超时（30秒），请稍后重试或手动更新")
+        except Exception as e:
+            yield event.plain_result(f"❌ 更新失败: {str(e)}")
 
     @command("dy_status")
     @permission_type(PermissionType.ADMIN)

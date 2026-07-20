@@ -13,7 +13,7 @@
     },
     "poll_interval": {
         "description": "监控轮询间隔（秒），最小 10 秒，建议 60 秒以上避免风控",
-        "type": "integer",
+        "type": "int",
         "default": 60,
         "minimum": 10
     },

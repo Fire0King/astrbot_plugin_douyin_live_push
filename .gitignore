@@ -78,21 +78,6 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Environment
-.env
-
-# Node.js
-node_modules/
-
-# IDE
-.vscode/
-
-# Data files (user data)
-data/
-
-# DouYin_Spider media/excel data
-DouYin_Spider/datas/
-
 # IPython
 profile_default/
 ipython_config.py

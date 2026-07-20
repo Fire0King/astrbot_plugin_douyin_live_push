@@ -342,6 +342,99 @@ class Main(Star):
 
         yield event.plain_result("\n".join(msg_parts))
 
+    @command("dy_test")
+    async def dy_test(self, event: AstrMessageEvent, raw_args: GreedyStr):
+        """
+        测试订阅功能。获取指定用户的最新视频/直播状态并推送测试消息，不保存订阅信息。
+
+        用法:
+          /dy_test <sec_uid>         — 测试视频推送
+          /dy_test live <直播间ID>    — 测试直播状态
+        """
+        args = raw_args.strip().split(None, 1) if raw_args.strip() else []
+        if not args:
+            yield event.plain_result("❌ 请提供 sec_uid 或直播间ID。\n用法: /dy_test <sec_uid> 或 /dy_test live <直播间ID>")
+            return
+
+        sub_user = event.unified_msg_origin
+        is_live_test = (args[0] == 'live' and len(args) > 1)
+        target = args[1] if is_live_test else args[0]
+
+        auth = self.dy_auth.auth if not is_live_test else self.live_auth.auth
+        if not auth or not DouyinAPI:
+            yield event.plain_result("❌ 抖音 Cookie 未配置，无法测试")
+            return
+
+        try:
+            if is_live_test:
+                # 测试直播状态
+                live_id = parse_live_room_id(target)
+                if not live_id:
+                    yield event.plain_result("❌ 无法识别直播间ID")
+                    return
+
+                yield event.plain_result(f"⏳ 正在查询直播间 {live_id} 状态...")
+                result = await asyncio.to_thread(
+                    DouyinAPI.get_live_info, auth, live_id
+                )
+
+                if not result or not isinstance(result, dict):
+                    yield event.plain_result("❌ 获取直播信息失败，请检查 Cookie 或直播间ID是否正确")
+                    return
+
+                room_status = result.get('room_status')
+                room_title = result.get('room_title', '无标题')
+                status_text = "🟢 直播中" if (room_status == '2' or room_status == 2) else "⭕ 未开播"
+                nickname = result.get('sec_uid', live_id)
+
+                dummy_record = SubscriptionRecord(
+                    sub_user=sub_user, uid=f"live_{live_id}",
+                    sub_type='live', room_id=live_id, nickname=nickname
+                )
+                await self.listener._push_live_message(
+                    sub_user, dummy_record,
+                    is_live=(room_status == '2' or room_status == 2),
+                    title=room_title
+                )
+                yield event.plain_result(f"✅ 直播状态: {status_text}\n📺 {room_title}\n测试消息已发送到当前会话")
+
+            else:
+                # 测试视频
+                sec_uid = parse_sec_uid(target)
+                if not sec_uid:
+                    yield event.plain_result("❌ 无法识别 sec_uid")
+                    return
+
+                yield event.plain_result(f"⏳ 正在查询用户 {sec_uid} 最新视频...")
+                user_url = build_user_url(sec_uid)
+                works = await asyncio.to_thread(
+                    DouyinAPI.get_user_all_work_info, auth, user_url
+                )
+
+                if not works:
+                    yield event.plain_result("❌ 未获取到视频数据，请检查 Cookie 或 sec_uid 是否正确")
+                    return
+
+                latest = works[0]
+                nickname = latest.get('author', {}).get('nickname', sec_uid)
+
+                dummy_record = SubscriptionRecord(
+                    sub_user=sub_user, uid=sec_uid,
+                    sub_type='video', sec_uid=sec_uid, nickname=nickname
+                )
+                await self.listener._push_video_message(sub_user, dummy_record, latest)
+
+                desc = latest.get('desc', '无标题')[:50]
+                yield event.plain_result(
+                    f"✅ 已获取到 {nickname} 的最新视频\n"
+                    f"📝 {desc}\n"
+                    f"测试消息已发送到当前会话"
+                )
+
+        except Exception as e:
+            logger.error(f"测试失败: {e}")
+            yield event.plain_result(f"❌ 测试失败: {str(e)}")
+
     @command("dy_clear")
     @permission_type(PermissionType.ADMIN)
     async def dy_clear(self, event: AstrMessageEvent):

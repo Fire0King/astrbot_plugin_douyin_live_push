@@ -102,7 +102,7 @@ except ImportError as e:
     "astrbot_plugin_douyin_live_push",
     "Fire_King",
     "抖音视频更新与直播间上下播推送插件",
-    "1.3.0",
+    "1.3.1",
     "https://github.com/Fire0King/astrbot_plugin_douyin_live_push"
 )
 class Main(Star):

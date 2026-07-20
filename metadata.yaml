@@ -2,7 +2,7 @@ name: astrbot_plugin_douyin_live_push
 display_name: 抖音推送
 desc: 监控抖音用户的视频更新和直播状态，实时推送开播提醒与视频发布通知到指定会话。
 short_desc: 抖音视频更新与直播上下播实时推送
-version: v1.3.0
+version: v1.3.1
 author: Fire_King
 repo: https://github.com/Fire0King/astrbot_plugin_douyin_live_push
 astrbot_version: ">=4.16,<5"
